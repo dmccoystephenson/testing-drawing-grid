@@ -16,27 +16,49 @@ white = (255,255,255)
 displayWidth = 800
 displayHeight = 800
 
-def log(message):
-    print(message)
+targetFramesPerSecond = 60
 
 numGrids = 1
-if len(sys.argv) > 1:
-    try:
-        gridSize = int(sys.argv[1])
-    except ValueError:
-        log("Invalid grid size argument, using default of 50.")
-        gridSize = 50
-else:
-    gridSize = 50
+defaultGridSize = 50
 
 url = "http://localhost"
 port = 9999
 
-locationService = LocationService(url, port)
-environmentService = EnvironmentService(url, port)
-exit_after_create = False
-if len(sys.argv) > 2 and sys.argv[2] == "--exit-after-create":
-    exit_after_create = True
+def log(message):
+    print(message)
+
+def parseArgs(argv):
+    """
+    Parse the command line arguments.
+
+    Args:
+        argv (list): The argument vector, including the program name at index 0
+
+    Returns:
+        tuple: The grid size to use, and whether to exit after creating the environment
+    """
+    gridSize = defaultGridSize
+    if len(argv) > 1:
+        try:
+            gridSize = int(argv[1])
+        except ValueError:
+            log("Invalid grid size argument, using default of " + str(defaultGridSize) + ".")
+            gridSize = defaultGridSize
+    exitAfterCreate = len(argv) > 2 and argv[2] == "--exit-after-create"
+    return gridSize, exitAfterCreate
+
+def getEnvironmentKey(gridSize):
+    """
+    Build the key under which an environment of the given size is recorded in the cache file.
+
+    Args:
+        gridSize (int): The size of one side of the grid
+
+    Returns:
+        str: The cache key, for example "1x50"
+    """
+    return f"{numGrids}x{gridSize}"
+
 def drawEnvironment(locations, graphik, locationWidth, locationHeight):
     for location in locations:
         red = random.randrange(50, 200)
@@ -46,7 +68,22 @@ def drawEnvironment(locations, graphik, locationWidth, locationHeight):
         y = location.get_y() * locationHeight
         graphik.drawRectangle(x - 1, y - 1, locationWidth * 1.5, locationHeight * 1.5, (red,green,blue))
 
-def main():
+def main(gridSize=defaultGridSize, exitAfterCreate=False, locationService=None, environmentService=None):
+    """
+    Render an environment of the requested size, creating it through Viron if it is not
+    already recorded in the cache file.
+
+    Args:
+        gridSize (int): The size of one side of the grid
+        exitAfterCreate (bool): Whether to render a newly created environment once and exit
+        locationService (LocationService): The location service to use, or None to build one
+        environmentService (EnvironmentService): The environment service to use, or None to build one
+    """
+    if locationService is None:
+        locationService = LocationService(url, port)
+    if environmentService is None:
+        environmentService = EnvironmentService(url, port)
+
     window = RenderWindow("Visualizing Environment With Random Colors", displayWidth, displayHeight)
     gameDisplay = window.get_surface()
     graphik = Graphik(gameDisplay)
@@ -61,14 +98,15 @@ def main():
             environments = json.load(f)
 
     # Create a unique key for the environment based on grid size and numGrids
-    env_key = f"{numGrids}x{gridSize}"
+    env_key = getEnvironmentKey(gridSize)
 
     if env_key in environments:
         graphik.drawText("Loading existing environment, please wait...", displayWidth/2, displayHeight/2, 20, "white")
+        pygame.display.update()
         env_id = environments[env_key]["environment_id"]
         try:
-         environment = environmentService.get_environment_by_id(env_id)
-         log(f"Loaded existing environment with id {env_id} and size {gridSize}x{gridSize} with {numGrids} grid(s).")
+            environment = environmentService.get_environment_by_id(env_id)
+            log(f"Loaded existing environment with id {env_id} and size {gridSize}x{gridSize} with {numGrids} grid(s).")
         except Exception as e:
             log(f"Error loading existing environment: {e}")
             graphik.drawText("Error loading environment, please check logs.", displayWidth/2, displayHeight/2 + 30, 20, "red")
@@ -77,7 +115,7 @@ def main():
             window.close()
             return
     else:
-        graphik.drawText("Creating environment, please wait...", 400, 400, 20,"white")
+        graphik.drawText("Creating environment, please wait...", displayWidth/2, displayHeight/2, 20,"white")
         pygame.display.update()
         log("Creating environment with " + str(numGrids) + " grid(s) of size " + str(gridSize) + "x" + str(gridSize))
         start_time = time.time()
@@ -92,8 +130,8 @@ def main():
         with open(env_file, "w") as f:
             json.dump(environments, f, indent=2)
         log(f"Created new environment with id {environment.getEnvironmentId()} in {end_time - start_time:.2f} seconds.")
-        
-        if exit_after_create:
+
+        if exitAfterCreate:
             log("Exiting after environment creation.")
             locations = locationService.get_locations_in_environment(environment.getEnvironmentId())
             drawEnvironment(locations, graphik, displayWidth/gridSize, displayHeight/gridSize)
@@ -104,7 +142,7 @@ def main():
 
     locationWidth = displayWidth/gridSize
     locationHeight = displayHeight/gridSize
-    
+
     locationsCache = {}
 
     while window.should_continue():
@@ -115,7 +153,10 @@ def main():
         gameDisplay.fill(white)
         drawEnvironment(locationsCache, graphik, locationWidth, locationHeight)
         pygame.display.update()
+        window.tick(targetFramesPerSecond)
 
     window.close()
 
-main()
+if __name__ == "__main__":
+    gridSize, exitAfterCreate = parseArgs(sys.argv)
+    main(gridSize, exitAfterCreate)
